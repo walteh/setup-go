@@ -114,9 +114,9 @@ export async function getGo(
         `Received HTTP status code ${err.httpStatusCode}.  This usually indicates the rate limit has been exceeded`
       );
     } else {
-      core.info(err.message);
+      core.info((err as Error).message);
     }
-    core.debug(err.stack);
+    core.debug((err as Error).stack ?? '');
     core.info('Falling back to download directly from Go');
   }
 
@@ -160,8 +160,77 @@ async function resolveVersionFromManifest(
     return info?.resolvedVersion;
   } catch (err) {
     core.info('Unable to resolve a version from the manifest...');
-    core.debug(err.message);
+    core.debug((err as Error).message);
   }
+}
+
+// for github hosted windows runner handle latency of OS drive
+// by avoiding write operations to C:
+async function cacheWindowsDir(
+  extPath: string,
+  tool: string,
+  version: string,
+  arch: string
+): Promise<string | false> {
+  if (os.platform() !== 'win32') return false;
+
+  // make sure the action runs in the hosted environment
+  if (
+    process.env['RUNNER_ENVIRONMENT'] !== 'github-hosted' &&
+    process.env['AGENT_ISSELFHOSTED'] === '1'
+  )
+    return false;
+
+  const defaultToolCacheRoot = process.env['RUNNER_TOOL_CACHE'];
+  if (!defaultToolCacheRoot) return false;
+
+  if (!fs.existsSync('d:\\') || !fs.existsSync('c:\\')) return false;
+
+  const actualToolCacheRoot = defaultToolCacheRoot
+    .replace('C:', 'D:')
+    .replace('c:', 'd:');
+  // make toolcache root to be on drive d:
+  process.env['RUNNER_TOOL_CACHE'] = actualToolCacheRoot;
+
+  const actualToolCacheDir = await tc.cacheDir(extPath, tool, version, arch);
+
+  // create a link from c: to d:
+  const defaultToolCacheDir = actualToolCacheDir.replace(
+    actualToolCacheRoot,
+    defaultToolCacheRoot
+  );
+  fs.mkdirSync(path.dirname(defaultToolCacheDir), {recursive: true});
+  fs.symlinkSync(actualToolCacheDir, defaultToolCacheDir, 'junction');
+  core.info(`Created link ${defaultToolCacheDir} => ${actualToolCacheDir}`);
+
+  const actualToolCacheCompleteFile = `${actualToolCacheDir}.complete`;
+  const defaultToolCacheCompleteFile = `${defaultToolCacheDir}.complete`;
+  fs.symlinkSync(
+    actualToolCacheCompleteFile,
+    defaultToolCacheCompleteFile,
+    'file'
+  );
+  core.info(
+    `Created link ${defaultToolCacheCompleteFile} => ${actualToolCacheCompleteFile}`
+  );
+
+  // make outer code to continue using toolcache as if it were installed on c:
+  // restore toolcache root to default drive c:
+  process.env['RUNNER_TOOL_CACHE'] = defaultToolCacheRoot;
+  return defaultToolCacheDir;
+}
+
+async function addExecutablesToToolCache(
+  extPath: string,
+  info: IGoVersionInfo,
+  arch: string
+): Promise<string> {
+  const tool = 'go';
+  const version = makeSemver(info.resolvedVersion);
+  return (
+    (await cacheWindowsDir(extPath, tool, version, arch)) ||
+    (await tc.cacheDir(extPath, tool, version, arch))
+  );
 }
 
 async function installGoVersion(
@@ -186,14 +255,10 @@ async function installGoVersion(
   }
 
   core.info('Adding to the cache ...');
-  const cachedDir = await tc.cacheDir(
-    extPath,
-    'go',
-    makeSemver(info.resolvedVersion),
-    arch
-  );
-  core.info(`Successfully cached go to ${cachedDir}`);
-  return cachedDir;
+  const toolCacheDir = await addExecutablesToToolCache(extPath, info, arch);
+  core.info(`Successfully cached go to ${toolCacheDir}`);
+
+  return toolCacheDir;
 }
 
 export async function extractGoArchive(archivePath: string): Promise<string> {
