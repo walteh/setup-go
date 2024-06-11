@@ -29,9 +29,8 @@ export const restoreCache = async (
     );
   }
 
-  const linuxVersion =
-    process.env.RUNNER_OS === 'Linux' ? `${process.env.ImageOS}-` : '';
-  const primaryKey = `setup-go-${platform}-${linuxVersion}go-${versionSpec}-${fileHash}`;
+  const cacheKeyPrefix = core.getInput('cache-key-prefix') || 'setup-go';
+  const primaryKey = `${cacheKeyPrefix}-${platform}-go-${versionSpec}-${fileHash}`;
   core.debug(`primary key is ${primaryKey}`);
 
   core.saveState(State.CachePrimaryKey, primaryKey);

@@ -87838,8 +87838,8 @@ const restoreCache = (versionSpec, packageManager, cacheDependencyPath) => __awa
     if (!fileHash) {
         throw new Error('Some specified paths were not resolved, unable to cache dependencies.');
     }
-    const linuxVersion = process.env.RUNNER_OS === 'Linux' ? `${process.env.ImageOS}-` : '';
-    const primaryKey = `setup-go-${platform}-${linuxVersion}go-${versionSpec}-${fileHash}`;
+    const cacheKeyPrefix = core.getInput('cache-key-prefix') || 'setup-go';
+    const primaryKey = `${cacheKeyPrefix}-${platform}-go-${versionSpec}-${fileHash}`;
     core.debug(`primary key is ${primaryKey}`);
     core.saveState(constants_1.State.CachePrimaryKey, primaryKey);
     const cacheKey = yield cache.restoreCache(cachePaths, primaryKey);
